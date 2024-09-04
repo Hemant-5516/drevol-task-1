@@ -1,0 +1,57 @@
+name: Threat Detection
+
+on:
+  schedule:
+    # Runs every hour
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  detect-threats:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Monitor CPU usage
+      run: |
+        CPU_USAGE=$(grep 'cpu ' /proc/stat | awk '{usage=($2+$4)*100/($2+$4+$5)} END {print usage}')
+        if (( $(echo "$CPU_USAGE > 85" | bc -l) )); then
+          echo "High CPU usage detected: $CPU_USAGE%" >> threat_alerts.log
+          echo "::set-output name=alert::High CPU usage detected!"
+        fi
+
+    - name: Monitor Disk usage
+      run: |
+        DISK_USAGE=$(df / | grep / | awk '{ print $5 }' | sed 's/%//g')
+        if [ $DISK_USAGE -gt 90 ]; then
+          echo "Low disk space detected: $DISK_USAGE% used" >> threat_alerts.log
+          echo "::set-output name=alert::Low disk space detected!"
+        fi
+
+    - name: Monitor Failed Logins (dummy check)
+      run: |
+        FAILED_LOGINS=$(grep 'Failed password' /var/log/auth.log | wc -l)
+        if [ $FAILED_LOGINS -gt 3 ]; then
+          echo "Multiple failed login attempts detected: $FAILED_LOGINS attempts" >> threat_alerts.log
+          echo "::set-output name=alert::Multiple failed login attempts detected!"
+        fi
+
+    - name: Notify via Email
+      if: steps.detect-threats.outputs.alert
+      run: |
+        cat threat_alerts.log | mail -s "Security Alert: Threat Detected" admin@company.com
+
+    - name: Archive Threat Logs
+      run: |
+        if [ -f threat_alerts.log ]; then
+          mv threat_alerts.log archive/threat_alerts_$(date +%Y%m%d%H%M%S).log
+        fi
+      continue-on-error: true
+
+    - name: Upload Logs to Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: threat-logs
+        path: archive/threat_alerts_*.log
